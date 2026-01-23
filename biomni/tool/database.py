@@ -4972,3 +4972,273 @@ def query_encode(
         api_result["result"] = _format_query_results(api_result["result"])
 
     return api_result
+
+
+def query_phewas(
+    prompt=None,
+    endpoint=None,
+    variant_id=None,
+    fields=None,
+    size=10,
+    verbose=True,
+):
+    """Query the BioThings PheWAS API for phenome-wide association study data from the eMERGE Network.
+
+    This function provides access to associations between genetic variants and diverse phenotypic traits
+    across large patient populations.
+
+    Parameters
+    ----------
+    prompt (str, optional): Natural language query about PheWAS data (e.g., "Find variants on chromosome X")
+    endpoint (str, optional): Direct PheWAS API endpoint to query
+    variant_id (str, optional): Variant ID to look up. Supports two formats:
+        - HGVS ID (e.g., "chr9:g.81310680A>C") - uses /variant endpoint
+        - rsID (e.g., "rs1757948") - uses /query endpoint with phewas.rsid filter
+    fields (str, optional): Comma-separated list of fields to return (e.g., "phewas.gene_name,phewas.pvalue")
+    size (int): Maximum number of results to return (default: 10, max: 1000)
+    verbose (bool): Whether to return detailed results (default: True)
+
+    Returns
+    -------
+    dict: Dictionary containing the query results or error information
+
+    Examples
+    --------
+    - By HGVS ID: query_phewas(variant_id="chr9:g.81310680A>C")
+    - By rsID: query_phewas(variant_id="rs1757948")
+    - Natural language: query_phewas(prompt="Find variants associated with diabetes on chromosome 2")
+    - Direct query: query_phewas(prompt="phewas.chrom:X")
+    - With specific fields: query_phewas(variant_id="rs7412", fields="phewas.gene_name,phewas.pvalue,phewas.trait")
+
+    """
+    # Production server from SmartAPI specification
+    base_url = "https://biothings.ncats.io/phewas"
+
+    # Handle variant lookup (detects HGVS vs rsID format)
+    if variant_id:
+        # rsIDs start with "rs" followed by digits - use query endpoint
+        if variant_id.lower().startswith("rs") and variant_id[2:].isdigit():
+            endpoint = f"{base_url}/query?q=phewas.rsid:{variant_id}&size={size}"
+            if fields:
+                endpoint += f"&fields={fields}"
+            description = f"Querying PheWAS data for rsID {variant_id}"
+        else:
+            # HGVS format (e.g., chr9:g.81310680A>C) - use variant endpoint
+            from urllib.parse import quote
+            encoded_id = quote(variant_id, safe="")
+            endpoint = f"{base_url}/variant/{encoded_id}"
+            if fields:
+                endpoint += f"?fields={fields}"
+            description = f"Looking up PheWAS data for HGVS variant {variant_id}"
+
+        # Use the common REST API helper function
+        api_result = _query_rest_api(endpoint=endpoint, method="GET", description=description)
+
+        if not verbose and "success" in api_result and api_result["success"] and "result" in api_result:
+            api_result["result"] = _format_query_results(api_result["result"])
+
+        return api_result
+
+    # Handle direct endpoint
+    if endpoint:
+        if endpoint.startswith("/"):
+            endpoint = f"{base_url}{endpoint}"
+        elif not endpoint.startswith("http"):
+            endpoint = f"{base_url}/{endpoint.lstrip('/')}"
+        description = "Direct query to provided PheWAS endpoint"
+
+        api_result = _query_rest_api(endpoint=endpoint, method="GET", description=description)
+
+        if not verbose and "success" in api_result and api_result["success"] and "result" in api_result:
+            api_result["result"] = _format_query_results(api_result["result"])
+
+        return api_result
+
+    # Handle natural language prompt
+    if prompt:
+        # Load schema from pickle file if it exists, otherwise use inline schema
+        schema_path = os.path.join(os.path.dirname(__file__), "schema_db", "phewas.pkl")
+        if os.path.exists(schema_path):
+            with open(schema_path, "rb") as f:
+                phewas_schema = pickle.load(f)
+        else:
+            # Fallback inline schema
+            phewas_schema = {
+                "base_url": "https://biothings.ncats.io/phewas",
+                "endpoints": {
+                    "variant_lookup": {
+                        "path": "/variant/{hgvs_id}",
+                        "method": "GET",
+                        "description": "Retrieve full record for a specific variant by HGVS ID (e.g., chr9:g.81310680A>C)",
+                        "note": "Only accepts HGVS IDs, NOT rsIDs. For rsIDs, use /query with phewas.rsid filter.",
+                    },
+                    "query": {
+                        "path": "/query",
+                        "method": "GET",
+                        "description": "Search with query syntax",
+                        "parameters": {
+                            "q": "Query string (e.g., phewas.rsid:rs1757948, phewas.chrom:X, phewas.gene_name:APOE)",
+                            "fields": "Comma-separated fields to return",
+                            "size": "Result limit (max 1000, default 10)",
+                            "from": "Pagination offset (default 0)",
+                            "sort": "Field to sort by",
+                        },
+                    },
+                },
+                "common_fields": [
+                    "phewas.rsid",
+                    "phewas.chrom",
+                    "phewas.pos",
+                    "phewas.gene_name",
+                    "phewas.trait",
+                    "phewas.pvalue",
+                    "phewas.beta",
+                    "phewas.cases",
+                    "phewas.controls",
+                ],
+                "example_queries": [
+                    "phewas.rsid:rs1757948",
+                    "phewas.chrom:X",
+                    "phewas.gene_name:APOE",
+                    "phewas.chrom:2 AND phewas.gene_name:APOE",
+                ],
+            }
+
+        # Create system prompt template
+        system_template = """
+        You are a bioinformatics expert that helps convert natural language queries into PheWAS API requests.
+
+        Based on the user's natural language request, you will generate a structured query for the PheWAS API.
+
+        The PheWAS API provides access to phenome-wide association study data from the eMERGE Network.
+
+        Here is the API schema:
+        {schema}
+
+        Output only a JSON object with the following fields:
+        1. "full_url": The complete URL to query (including the base URL "https://biothings.ncats.io/phewas")
+        2. "description": A brief description of what the query is doing
+
+        IMPORTANT: Your response must ONLY contain a JSON object with the required fields.
+
+        IMPORTANT ROUTING RULES:
+        - The /variant/{id} endpoint ONLY accepts HGVS IDs (e.g., chr9:g.81310680A>C). HGVS IDs must be URL-encoded.
+        - For rsIDs (e.g., rs1757948), you MUST use /query?q=phewas.rsid:{rsid}
+        - For all other searches, use /query?q=...
+
+        EXAMPLES OF CORRECT OUTPUTS:
+        - For "Find variants on chromosome X": {{"full_url": "https://biothings.ncats.io/phewas/query?q=phewas.chrom:X&size=10", "description": "Searching for variants on chromosome X"}}
+        - For "Get variant rs1757948": {{"full_url": "https://biothings.ncats.io/phewas/query?q=phewas.rsid:rs1757948&size=10", "description": "Querying rsID rs1757948"}}
+        - For "Find APOE gene variants": {{"full_url": "https://biothings.ncats.io/phewas/query?q=phewas.gene_name:APOE&size=10", "description": "Finding APOE gene variants"}}
+        - For "Get HGVS variant chr9:g.81310680A>C": {{"full_url": "https://biothings.ncats.io/phewas/variant/chr9%3Ag.81310680A%3EC", "description": "Looking up HGVS variant"}}
+
+        Remember:
+        - Use /variant/{hgvs_id} ONLY for HGVS IDs (URL-encoded)
+        - Use /query?q=phewas.rsid:{rsid} for rsIDs
+        - Use /query?q=... for all other searches
+        - Query syntax: field:value, use AND/OR for multiple conditions
+        - Always include &size={size} parameter for query endpoint
+        """
+
+        # Query Claude to generate the API call
+        llm_result = _query_llm_for_api(
+            prompt=prompt,
+            schema=phewas_schema,
+            system_template=system_template,
+        )
+
+        if not llm_result["success"]:
+            return llm_result
+
+        # Get the full URL from Claude's response
+        query_info = llm_result["data"]
+        endpoint = query_info.get("full_url", "")
+        description = query_info.get("description", "")
+
+        if not endpoint:
+            return {
+                "error": "Failed to generate a valid endpoint from the prompt",
+                "llm_response": llm_result.get("raw_response", "No response"),
+            }
+
+        # Add size parameter if not already specified
+        if "/query" in endpoint and "size=" not in endpoint:
+            separator = "&" if "?" in endpoint else "?"
+            endpoint += f"{separator}size={size}"
+
+        # Add fields parameter if specified
+        if fields and "fields=" not in endpoint:
+            separator = "&" if "?" in endpoint else "?"
+            endpoint += f"{separator}fields={fields}"
+
+        # Use the common REST API helper function
+        api_result = _query_rest_api(endpoint=endpoint, method="GET", description=description)
+
+        # Add query metadata to the result
+        if api_result.get("success", False):
+            api_result["query_info"] = {
+                "description": description,
+                "endpoint_used": endpoint,
+                "data_source": "BioThings PheWAS API (eMERGE Network)",
+            }
+
+        if not verbose and "success" in api_result and api_result["success"] and "result" in api_result:
+            api_result["result"] = _format_query_results(api_result["result"])
+
+        return api_result
+
+    return {"error": "Either prompt, endpoint, or variant_id must be provided"}
+
+
+def query_phewas_batch(variant_ids: list[str], fields: str = None) -> dict[str, Any]:
+    """Query PheWAS data for multiple variants in a single batch request.
+
+    Parameters
+    ----------
+    variant_ids (list): List of HGVS variant IDs to query (up to 1000).
+        Note: This endpoint uses HGVS IDs (e.g., "chr9:g.81310680A>C"), not rsIDs.
+        For batch rsID queries, use query_phewas() with prompt parameter.
+    fields (str, optional): Comma-separated list of fields to return
+
+    Returns
+    -------
+    dict: Dictionary containing batch query results or error information
+
+    Examples
+    --------
+    - Basic batch query: query_phewas_batch(["chr9:g.81310680A>C", "chr1:g.12345A>G"])
+    - With specific fields: query_phewas_batch(["chr9:g.81310680A>C"], fields="phewas.gene_name,phewas.pvalue")
+
+    """
+    # Production server from SmartAPI specification
+    base_url = "https://biothings.ncats.io/phewas"
+
+    if not variant_ids:
+        return {"error": "variant_ids list cannot be empty"}
+
+    if len(variant_ids) > 1000:
+        return {"error": "Batch queries are limited to 1000 variants maximum"}
+
+    endpoint = f"{base_url}/variant"
+    json_data = {"ids": variant_ids}
+
+    if fields:
+        json_data["fields"] = fields
+
+    description = f"Batch querying {len(variant_ids)} variants from PheWAS API"
+
+    # Use the common REST API helper function with POST method
+    api_result = _query_rest_api(
+        endpoint=endpoint, method="POST", json_data=json_data, description=description
+    )
+
+    # Add query metadata to the result
+    if api_result.get("success", False):
+        api_result["query_info"] = {
+            "description": description,
+            "variant_count": len(variant_ids),
+            "endpoint_used": endpoint,
+            "data_source": "BioThings PheWAS API (eMERGE Network)",
+        }
+
+    return api_result

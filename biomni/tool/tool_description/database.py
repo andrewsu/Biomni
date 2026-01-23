@@ -728,4 +728,57 @@ description = [
             },
         ],
     },
+    {
+        "description": "Query the BioThings PheWAS API for phenome-wide association study data from the eMERGE Network.",
+        "name": "query_phewas",
+        "optional_parameters": [
+            {
+                "name": "prompt",
+                "type": "str",
+                "description": "Natural language query about PheWAS data (e.g., 'Find variants in APOE gene')",
+                "default": None,
+            },
+            {
+                "name": "endpoint",
+                "type": "str",
+                "description": "Direct PheWAS API endpoint to query",
+                "default": None,
+            },
+            {
+                "name": "variant_id",
+                "type": "str",
+                "description": "Variant ID: HGVS format (e.g., 'chr9:g.81310680A>C') or rsID (e.g., 'rs1757948')",
+                "default": None,
+            },
+            {
+                "name": "fields",
+                "type": "str",
+                "description": "Comma-separated list of fields to return (e.g., 'phewas.gene_name,phewas.pvalue')",
+                "default": None,
+            },
+            {"name": "size", "type": "int", "description": "Maximum number of results (max 1000)", "default": 10},
+            {"name": "verbose", "type": "bool", "description": "Return detailed results", "default": True},
+        ],
+        "required_parameters": [],
+    },
+    {
+        "description": "Query PheWAS data for multiple variants in a single batch request using HGVS IDs.",
+        "name": "query_phewas_batch",
+        "optional_parameters": [
+            {
+                "name": "fields",
+                "type": "str",
+                "description": "Comma-separated list of fields to return",
+                "default": None,
+            },
+        ],
+        "required_parameters": [
+            {
+                "name": "variant_ids",
+                "type": "list[str]",
+                "description": "List of HGVS variant IDs to query (up to 1000, e.g., ['chr9:g.81310680A>C'])",
+                "default": None,
+            }
+        ],
+    },
 ]
